@@ -11,10 +11,9 @@ import os
 
 # Initialize Groq Model
 llm = ChatGroq(
-    temperature = 1.0,
-    groq_api_key = "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",
-    model_name ="llama-3.3-70b-versatile"
-
+    temperature=0.3,
+    groq_api_key=st.secrets["GROQ_API_KEY"],
+    model_name="llama-3.3-70b-versatile"
 )
 
 
