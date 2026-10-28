@@ -3,11 +3,12 @@
 
 import streamlit as st 
 from langchain_groq import ChatGroq
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from gtts import gTTS
 from fpdf import FPDF
 import base64
 from datetime import datetime
-import os
+
 
 # Initialize Groq Model
 llm = ChatGroq(
@@ -16,11 +17,18 @@ llm = ChatGroq(
     model_name="openai/gpt-oss-120b"
 )
 
+DEFAULT_PROMPT = """You are Robin, an AI legal information assistant for Indian law.
+- Answer using Indian laws: the Constitution of India, the Bharatiya Nyaya Sanhita (BNS), Bharatiya Nagarik Suraksha Sanhita (BNSS), Bharatiya Sakshya Adhiniyam (BSA), Consumer Protection Act 2019, IT Act 2000, etc.
+- Note: BNS, BNSS and BSA replaced the IPC, CrPC and Evidence Act from 1 July 2024. Mention the old section only as a reference.
+- Explain in simple language. Cite the Act and section only when you are confident.
+- If you are not sure, say so. Never invent sections or case names.
+- You give general legal information, not legal advice. Suggest consulting a qualified advocate for specific situations."""
 
 # Initialize conversation history
-if 'conversation_history' not in st.session_state:
-    st.session_state.conversation_history = []
-    
+if "conversation_history" not in st.session_state:
+    st.session_state.conversation_history = []  
+if "messages" not in st.session_state:
+    st.session_state.messages = []   
     
  # Function to convert text to speech
 def text_to_speech(text, filename="response.mp3"):
@@ -38,15 +46,19 @@ def play_audio(audio_file):
 
 # Function to create PDF
 def create_pdf(conversations, filename="chat_history.pdf"):
+    def clean(t):
+        return t.encode("latin-1", "replace").decode("latin-1")
+
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Roman", size=14)
-    pdf.cell(200, 10, txt="Chatbot Conversation History", ln=True, align='C')
+    pdf.set_font("Helvetica", size=12)
+    pdf.cell(200, 10, txt="Robin - Conversation History", ln=True, align="C")
     pdf.ln(10)
     for convo in conversations:
-        pdf.multi_cell(0, 10, txt=convo)
+        pdf.multi_cell(0, 8, txt=clean(convo))
         pdf.ln(5)
     pdf.output(filename)
+
     
 # ----------------------------
 # Background Image Function
@@ -87,54 +99,67 @@ set_background("chatbot.jpg")
     
 # Streamlit UI
 #st.sidebar.header("About")
-#st.sidebar.write("A chatbot powered by Llama3 (via Groq) to answer any queries — just by adjusting the system prompt.")
+st.sidebar.write("Robin is an AI legal assistant for Indian law, powered by GPT-OSS 120B via the Groq API. It gives general information, can make mistakes, and is not legal advice. Please consult a qualified advocate.")
 
 # System prompt input (optional)
 #system_prompt = st.sidebar.text_area("System Prompt (optional)", 
  #                                    "You are a helpful AI assistant. Answer the user's queries politely and informatively.")
-st.title("🤖 Robin - The Chatbot")
+st.title("🤖 Robin - AI Legal Assistant (Indian Law)")
 
 st.sidebar.header("About")
-st.sidebar.write("A universal chatbot using Llama3 via Groq API. Includes TTS, PDF export, and custom background.")
+st.sidebar.write(
+    "Robin gives general information on Indian law using an LLM via the Groq API. "
+    "It can make mistakes and is not legal advice. Please consult a qualified advocate."
+)
 
-system_prompt = st.sidebar.text_area("System Prompt (optional)", 
-                                     "You are a helpful AI assistant. Answer queries politely and informatively.")
+system_prompt = st.sidebar.text_area("System Prompt (optional)", DEFAULT_PROMPT, height=300)
 
-user_query = st.text_area("Enter your query:")
+if st.sidebar.button("Clear conversation"):
+    st.session_state.messages = []
+    st.session_state.conversation_history = []
+    st.rerun()
+
+user_query = st.text_area("Enter your legal query:")
 
 if st.button("Get Response"):
     if user_query.strip():
         with st.spinner("Thinking..."):
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            final_query = f"{system_prompt}\nUser: {user_query}"
 
-            response = llm.invoke(final_query)
+            # System prompt + last 10 messages (memory) + new question
+            msgs = [SystemMessage(content=system_prompt)]
+            msgs += st.session_state.messages[-10:]
+            msgs.append(HumanMessage(content=user_query))
+
+            try:
+                response = llm.invoke(msgs)
+            except Exception:
+                st.error("Could not get a response. Please try again in a moment.")
+                st.stop()
 
             if response.content:
                 st.success("Response:")
                 st.write(response.content)
 
+                # Memory for the model
+                st.session_state.messages.append(HumanMessage(content=user_query))
+                st.session_state.messages.append(AIMessage(content=response.content))
+
+                # Log for the PDF
                 st.session_state.conversation_history.append(
-                    f"[{timestamp}]\nUser: {user_query}\nBot: {response.content}\n"
+                    f"[{timestamp}]\nUser: {user_query}\nRobin: {response.content}\n"
                 )
 
-                audio_file = text_to_speech(response.content)
-                st.write("🔊 Listen to the response:")
-                play_audio(audio_file)
+                try:
+                    audio_file = text_to_speech(response.content)
+                    st.write("🔊 Listen to the response:")
+                    play_audio(audio_file)
+                except Exception:
+                    st.info("Audio is unavailable for this response.")
             else:
                 st.error("No response received.")
     else:
         st.warning("Please enter a query.")
-
-if st.button("Download Conversation as PDF"):
-    if st.session_state.conversation_history:
-        pdf_file = "chat_history.pdf"
-        create_pdf(st.session_state.conversation_history, pdf_file)
-        with open(pdf_file, "rb") as f:
-            st.download_button("📄 Download PDF", f, file_name=pdf_file)
-    else:
-        st.warning("No conversation history yet.")
-
 
 
 
